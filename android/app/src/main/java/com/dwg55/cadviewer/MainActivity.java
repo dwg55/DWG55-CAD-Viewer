@@ -8,13 +8,16 @@ import android.net.Uri;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebSettings;
-import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.ValueCallback;
+import android.view.View;
+import android.widget.Toast;
 
 public class MainActivity extends Activity {
 
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
+
     private static final int FILE_REQUEST = 1001;
 
     @Override
@@ -25,53 +28,69 @@ public class MainActivity extends Activity {
         setContentView(webView);
 
         WebSettings settings = webView.getSettings();
+
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+        settings.setAllowFileAccess(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setUseWideViewPort(true);
+        settings.setBuiltInZoomControls(false);
 
         webView.setWebViewClient(new WebViewClient());
 
-        webView.setWebChromeClient(new WebChromeClient() {
-            @Override
-            public boolean onShowFileChooser(
-                WebView view,
-                ValueCallback<Uri[]> callback,
-                FileChooserParams params
-            ) {
-                if (fileCallback != null) {
-                    fileCallback.onReceiveValue(null);
-                }
+        webView.setWebChromeClient(
+            new WebChromeClient() {
 
-                fileCallback = callback;
+                @Override
+                public boolean onShowFileChooser(
+                    WebView view,
+                    ValueCallback<Uri[]> callback,
+                    FileChooserParams params
+                ) {
 
-                Intent intent = new Intent(
-                    Intent.ACTION_OPEN_DOCUMENT
-                );
-                intent.addCategory(
-                    Intent.CATEGORY_OPENABLE
-                );
-                intent.setType("*/*");
-                intent.putExtra(
-                    Intent.EXTRA_MIME_TYPES,
-                    new String[]{
-                        "application/acad",
-                        "application/dwg",
-                        "application/octet-stream",
-                        "application/dxf"
+                    if (fileCallback != null) {
+                        fileCallback.onReceiveValue(null);
                     }
-                );
 
-                try {
-                    startActivityForResult(
-                        intent, FILE_REQUEST
+                    fileCallback = callback;
+
+                    Intent intent = new Intent(
+                        Intent.ACTION_OPEN_DOCUMENT
                     );
-                    return true;
-                } catch (Exception e) {
-                    fileCallback = null;
-                    callback.onReceiveValue(null);
-                    return false;
+
+                    intent.addCategory(
+                        Intent.CATEGORY_OPENABLE
+                    );
+
+                    intent.setType("*/*");
+
+                    intent.addFlags(
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    );
+
+                    try {
+                        startActivityForResult(
+                            intent,
+                            FILE_REQUEST
+                        );
+                        return true;
+
+                    } catch (Exception e) {
+
+                        fileCallback = null;
+                        callback.onReceiveValue(null);
+
+                        Toast.makeText(
+                            MainActivity.this,
+                            "تعذر فتح الملفات",
+                            Toast.LENGTH_LONG
+                        ).show();
+
+                        return false;
+                    }
                 }
             }
-        });
+        );
 
         webView.loadUrl(
             "https://dwg55.github.io/DWG55-CAD-Viewer/"
@@ -85,21 +104,27 @@ public class MainActivity extends Activity {
         Intent data
     ) {
         super.onActivityResult(
-            requestCode, resultCode, data
+            requestCode,
+            resultCode,
+            data
         );
 
-        if (requestCode == FILE_REQUEST &&
-            fileCallback != null) {
+        if (requestCode == FILE_REQUEST) {
+
+            if (fileCallback == null) {
+                return;
+            }
 
             Uri[] results = null;
 
             if (resultCode == RESULT_OK &&
-                data != null &&
-                data.getData() != null) {
+                data != null) {
 
-                results = new Uri[]{
-                    data.getData()
-                };
+                Uri uri = data.getData();
+
+                if (uri != null) {
+                    results = new Uri[]{uri};
+                }
             }
 
             fileCallback.onReceiveValue(results);
@@ -108,7 +133,21 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public void onBackPressed() {
+
+        if (webView != null &&
+            webView.canGoBack()) {
+
+            webView.goBack();
+
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    @Override
     protected void onDestroy() {
+
         if (fileCallback != null) {
             fileCallback.onReceiveValue(null);
             fileCallback = null;
@@ -116,6 +155,7 @@ public class MainActivity extends Activity {
 
         if (webView != null) {
             webView.destroy();
+            webView = null;
         }
 
         super.onDestroy();
