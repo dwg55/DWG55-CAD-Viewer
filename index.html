@@ -2,250 +2,197 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport"
-content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DWG55 CAD</title>
-
 <style>
 *{box-sizing:border-box}
 body{
- margin:0;
- background:#101820;
- color:white;
- font-family:Arial,sans-serif;
- overflow:hidden;
+ margin:0;background:#101820;color:#fff;
+ font-family:Arial,sans-serif;overflow:hidden
 }
 header{
- height:65px;
- background:#202e3a;
- display:flex;
- align-items:center;
+ height:66px;background:#202e3b;
+ display:flex;align-items:center;
  justify-content:space-between;
- padding:8px;
- gap:8px;
+ gap:8px;padding:8px
 }
-header b{font-size:17px}
-button{
- border:0;
- border-radius:9px;
- padding:12px;
- background:#334b60;
- color:white;
- font-size:14px;
+button,.openbox{
+ background:#334b60;color:white;
+ border:0;border-radius:9px;
+ padding:12px;font-size:14px;
+ white-space:nowrap
+}
+.openbox{
+ position:relative;
+ overflow:hidden;
+ background:#087ee2;
  cursor:pointer;
- white-space:nowrap;
+ flex:1;text-align:center;
+ max-width:230px
 }
-button.active{background:#087fe2}
+.openbox input{
+ position:absolute;inset:0;
+ width:100%;height:100%;
+ opacity:0;cursor:pointer;
+ font-size:100px
+}
 .toolbar{
- display:flex;
- gap:7px;
- padding:8px;
- height:65px;
+ display:flex;gap:7px;
  background:#1b2935;
- overflow-x:auto;
+ padding:8px;overflow-x:auto;
+ height:62px
 }
 .toolbar button{flex-shrink:0}
-#canvas{
- display:block;
- width:100%;
- height:calc(100dvh - 175px);
- touch-action:none;
- background:#101820;
+.active{background:#087ee2}
+canvas{
+ display:block;width:100%;
+ height:calc(100dvh - 180px);
+ touch-action:none;background:#101820
 }
 footer{
- height:45px;
- background:#202e3a;
- padding:12px;
- font-size:12px;
- overflow:hidden;
- white-space:nowrap;
- text-overflow:ellipsis;
+ height:52px;background:#202e3b;
+ padding:8px;font-size:12px;
+ overflow:auto
 }
-#fileInput{
- position:absolute;
- width:1px;
- height:1px;
- opacity:0;
- pointer-events:none;
-}
+#details{color:#83d6ff}
 </style>
 </head>
-
 <body>
 
 <header>
  <b>DWG55 CAD</b>
-
- <button type="button" id="openBtn">
+ <div class="openbox">
  📂 فتح ملف
- </button>
-
- <button type="button" id="fitBtn">
- ⤢ ضبط
- </button>
+ <input type="file" id="file"
+ aria-label="اختيار ملف من الهاتف">
+ </div>
+ <button onclick="fit()">⤢ ضبط</button>
 </header>
-
-<input type="file"
- id="fileInput"
- accept=".dwg,.dxf,application/octet-stream,*/*">
 
 <div class="toolbar">
  <button class="active" data-tool="pan">✋ تحريك</button>
  <button data-tool="line">╱ خط</button>
- <button data-tool="distance">↔ مسافة</button>
+ <button data-tool="distance">↔ قياس</button>
  <button data-tool="area">▱ مساحة</button>
- <button id="finishBtn">✓ إنهاء</button>
- <button id="zoomIn">＋</button>
- <button id="zoomOut">－</button>
- <button id="undoBtn">↶ تراجع</button>
- <button id="clearBtn">مسح</button>
+ <button onclick="finish()">✓ إنهاء</button>
+ <button onclick="zoom(1.3)">＋</button>
+ <button onclick="zoom(1/1.3)">－</button>
+ <button onclick="undo()">↶ تراجع</button>
+ <button onclick="clearAll()">مسح</button>
 </div>
 
 <canvas id="canvas"></canvas>
 
-<footer id="status">
-اضغط فتح ملف لاختيار خريطة DXF أو DWG
+<footer>
+ <div id="status">جاهز — اضغط فتح ملف</div>
+ <div id="details">DWG55 CAD v6</div>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js"></script>
-
 <script>
-const canvas=document.getElementById('canvas');
-const ctx=canvas.getContext('2d');
-const statusBox=document.getElementById('status');
-const input=document.getElementById('fileInput');
+const c=document.getElementById('canvas');
+const ctx=c.getContext('2d');
+const fileInput=document.getElementById('file');
+const statusEl=document.getElementById('status');
+const details=document.getElementById('details');
 
-let objects=[];
-let pending=[];
-let tool='pan';
-let scale=30;
-let ox=0,oy=0;
-let drag=null;
-let pointers=new Map();
+let objects=[],pending=[],tool='pan';
+let scale=30,ox=0,oy=0;
+let last=null,moved=false;
+const touches=new Map();
 let pinch=null;
-let ignoreTap=false;
 
-function msg(t){
- statusBox.textContent=t;
-}
+function msg(s){statusEl.textContent=s}
 
 function resize(){
- let d=window.devicePixelRatio||1;
- canvas.width=Math.round(canvas.clientWidth*d);
- canvas.height=Math.round(canvas.clientHeight*d);
+ const d=devicePixelRatio||1;
+ c.width=Math.round(c.clientWidth*d);
+ c.height=Math.round(c.clientHeight*d);
  ctx.setTransform(d,0,0,d,0,0);
  draw();
 }
 
-function screenPoint(p){
- return{
-  x:p.x*scale+ox,
-  y:-p.y*scale+oy
- };
+function screen(p){
+ return{x:p.x*scale+ox,y:oy-p.y*scale};
 }
-
-function worldPoint(p){
- return{
-  x:(p.x-ox)/scale,
-  y:-(p.y-oy)/scale
- };
+function world(p){
+ return{x:(p.x-ox)/scale,y:(oy-p.y)/scale};
 }
-
-function localPoint(e){
- const r=canvas.getBoundingClientRect();
- return{
-  x:e.clientX-r.left,
-  y:e.clientY-r.top
- };
+function local(e){
+ const r=c.getBoundingClientRect();
+ return{x:e.clientX-r.left,y:e.clientY-r.top};
 }
-
-function distance(a,b){
+function dist(a,b){
  return Math.hypot(a.x-b.x,a.y-b.y);
 }
-
-function polygonArea(points){
- let sum=0;
- for(let i=0;i<points.length;i++){
-  let a=points[i];
-  let b=points[(i+1)%points.length];
-  sum+=a.x*b.y-b.x*a.y;
+function area(a){
+ let n=0;
+ for(let i=0;i<a.length;i++){
+  let p=a[i],q=a[(i+1)%a.length];
+  n+=p.x*q.y-q.x*p.y;
  }
- return Math.abs(sum/2);
+ return Math.abs(n/2);
 }
 
 function draw(){
- const w=canvas.clientWidth;
- const h=canvas.clientHeight;
-
+ const w=c.clientWidth,h=c.clientHeight;
  ctx.fillStyle='#101820';
  ctx.fillRect(0,0,w,h);
 
  if(scale>8){
   ctx.beginPath();
   ctx.strokeStyle='#243746';
-  ctx.lineWidth=.7;
-
+  ctx.lineWidth=.6;
   for(let x=((ox%scale)+scale)%scale;x<w;x+=scale){
-   ctx.moveTo(x,0);
-   ctx.lineTo(x,h);
+   ctx.moveTo(x,0);ctx.lineTo(x,h);
   }
-
   for(let y=((oy%scale)+scale)%scale;y<h;y+=scale){
-   ctx.moveTo(0,y);
-   ctx.lineTo(w,y);
+   ctx.moveTo(0,y);ctx.lineTo(w,y);
   }
   ctx.stroke();
  }
 
  for(const o of objects){
   ctx.beginPath();
-
   if(o.center&&o.radius){
-   let p=screenPoint(o.center);
+   const p=screen(o.center);
    ctx.arc(p.x,p.y,o.radius*scale,0,Math.PI*2);
   }else{
-   (o.p||[]).forEach((p,i)=>{
-    let s=screenPoint(p);
-    if(i===0)ctx.moveTo(s.x,s.y);
-    else ctx.lineTo(s.x,s.y);
+   (o.p||[]).forEach((v,i)=>{
+    const p=screen(v);
+    if(i)ctx.lineTo(p.x,p.y);
+    else ctx.moveTo(p.x,p.y);
    });
   }
-
   if(o.closed)ctx.closePath();
-
-  ctx.strokeStyle=o.color||'#55d8ff';
+  ctx.strokeStyle=o.color||'#54d8ff';
   ctx.lineWidth=1.5;
   ctx.stroke();
-
-  if(o.label&&o.p&&o.p.length){
-   let s=screenPoint(o.p[o.p.length-1]);
-   ctx.fillStyle='#ffd76b';
+  if(o.label&&o.p?.length){
+   const p=screen(o.p[o.p.length-1]);
+   ctx.fillStyle='#ffd36b';
    ctx.font='13px Arial';
-   ctx.fillText(o.label,s.x+6,s.y-6);
+   ctx.fillText(o.label,p.x+5,p.y-5);
   }
  }
 
  if(pending.length){
   ctx.beginPath();
-
-  pending.forEach((p,i)=>{
-   let s=screenPoint(p);
-   if(i===0)ctx.moveTo(s.x,s.y);
-   else ctx.lineTo(s.x,s.y);
+  pending.forEach((v,i)=>{
+   const p=screen(v);
+   if(i)ctx.lineTo(p.x,p.y);
+   else ctx.moveTo(p.x,p.y);
   });
-
-  ctx.strokeStyle='#ffce64';
+  ctx.strokeStyle='#ffca55';
   ctx.lineWidth=2;
   ctx.stroke();
  }
 }
 
-function fitDrawing(){
- let all=[];
-
+function fit(){
+ const all=[];
  for(const o of objects){
   if(o.p)all.push(...o.p);
-
   if(o.center&&o.radius){
    all.push(
     {x:o.center.x-o.radius,y:o.center.y-o.radius},
@@ -253,42 +200,30 @@ function fitDrawing(){
    );
   }
  }
-
  if(!all.length){
-  scale=30;
-  ox=canvas.clientWidth/2;
-  oy=canvas.clientHeight/2;
-  draw();
-  return;
+  scale=30;ox=c.clientWidth/2;oy=c.clientHeight/2;
+  draw();return;
  }
-
- let minX=Infinity,minY=Infinity;
- let maxX=-Infinity,maxY=-Infinity;
-
+ let minX=Infinity,maxX=-Infinity;
+ let minY=Infinity,maxY=-Infinity;
  for(const p of all){
   minX=Math.min(minX,p.x);
   maxX=Math.max(maxX,p.x);
   minY=Math.min(minY,p.y);
   maxY=Math.max(maxY,p.y);
  }
-
- let width=Math.max(maxX-minX,.01);
- let height=Math.max(maxY-minY,.01);
-
  scale=Math.min(
-  canvas.clientWidth*.88/width,
-  canvas.clientHeight*.88/height,
+  c.clientWidth*.88/Math.max(maxX-minX,.01),
+  c.clientHeight*.88/Math.max(maxY-minY,.01),
   100000
  );
-
- ox=canvas.clientWidth/2-(minX+maxX)*scale/2;
- oy=canvas.clientHeight/2+(minY+maxY)*scale/2;
-
+ ox=c.clientWidth/2-(minX+maxX)*scale/2;
+ oy=c.clientHeight/2+(minY+maxY)*scale/2;
  draw();
 }
 
-function zoom(f,x=canvas.clientWidth/2,y=canvas.clientHeight/2){
- let p=worldPoint({x,y});
+function zoom(f,x=c.clientWidth/2,y=c.clientHeight/2){
+ const p=world({x,y});
  scale=Math.max(.00001,Math.min(100000,scale*f));
  ox=x-p.x*scale;
  oy=y+p.y*scale;
@@ -297,257 +232,193 @@ function zoom(f,x=canvas.clientWidth/2,y=canvas.clientHeight/2){
 
 function tap(p){
  if(tool==='pan')return;
-
- pending.push(worldPoint(p));
-
+ pending.push(world(p));
  if(pending.length===2&&
  (tool==='line'||tool==='distance')){
-
-  let d=distance(pending[0],pending[1]);
-
+  const d=dist(pending[0],pending[1]);
   objects.push({
    p:[...pending],
-   color:tool==='distance'?'#ffd76b':'#55d8ff',
+   color:tool==='distance'?'#ffd36b':'#54d8ff',
    label:tool==='distance'?d.toFixed(2):''
   });
-
   pending=[];
-
   msg(tool==='distance'?
    'المسافة: '+d.toFixed(2)+' وحدة رسم':
-   'تم رسم الخط');
+   'تم رسم خط');
  }
-
  draw();
 }
 
 function finish(){
  if(tool==='area'&&pending.length>=3){
-  let a=polygonArea(pending);
-
+  const a=area(pending);
   objects.push({
-   p:[...pending],
-   closed:true,
-   color:'#67e8a5',
-   label:a.toFixed(2)
+   p:[...pending],closed:true,
+   color:'#67e8a5',label:a.toFixed(2)
   });
-
   msg('المساحة: '+a.toFixed(2)+' وحدة مربعة');
  }
-
- pending=[];
- draw();
+ pending=[];draw();
 }
 
-canvas.addEventListener('pointerdown',e=>{
- canvas.setPointerCapture(e.pointerId);
- let p=localPoint(e);
-
- pointers.set(e.pointerId,p);
-
- if(pointers.size===1){
-  drag={start:p,last:p,moved:false};
-  ignoreTap=false;
+function undo(){
+ if(pending.length)pending.pop();
+ else objects.pop();
+ draw();
+}
+function clearAll(){
+ if(confirm('مسح الرسم؟')){
+  objects=[];pending=[];fit();
+  msg('تم مسح الرسم');
  }
+}
 
- if(pointers.size===2){
-  let a=[...pointers.values()];
+document.querySelectorAll('[data-tool]').forEach(b=>{
+ b.onclick=()=>{
+  tool=b.dataset.tool;
+  pending=[];
+  document.querySelectorAll('[data-tool]').forEach(x=>{
+   x.classList.toggle('active',x===b);
+  });
+  msg('الأداة: '+b.textContent);
+  draw();
+ };
+});
+
+c.addEventListener('pointerdown',e=>{
+ c.setPointerCapture(e.pointerId);
+ const p=local(e);
+ touches.set(e.pointerId,p);
+ if(touches.size===1){
+  last=p;moved=false;
+ }
+ if(touches.size===2){
+  const a=[...touches.values()];
   pinch={
-   d:distance(a[0],a[1]),
+   d:dist(a[0],a[1]),
    x:(a[0].x+a[1].x)/2,
    y:(a[0].y+a[1].y)/2
   };
-  ignoreTap=true;
+  moved=true;
  }
 });
 
-canvas.addEventListener('pointermove',e=>{
- if(!pointers.has(e.pointerId))return;
+c.addEventListener('pointermove',e=>{
+ if(!touches.has(e.pointerId))return;
+ const p=local(e);
+ const old=touches.get(e.pointerId);
+ touches.set(e.pointerId,p);
 
- let p=localPoint(e);
- pointers.set(e.pointerId,p);
-
- if(pointers.size===2){
-  let a=[...pointers.values()];
-  let v={
-   d:distance(a[0],a[1]),
+ if(touches.size===2){
+  const a=[...touches.values()];
+  const v={
+   d:dist(a[0],a[1]),
    x:(a[0].x+a[1].x)/2,
    y:(a[0].y+a[1].y)/2
   };
-
   if(pinch&&pinch.d){
    ox+=v.x-pinch.x;
    oy+=v.y-pinch.y;
    zoom(v.d/pinch.d,v.x,v.y);
   }
-
-  pinch=v;
-  ignoreTap=true;
-
- }else if(tool==='pan'&&drag){
-  ox+=p.x-drag.last.x;
-  oy+=p.y-drag.last.y;
-
-  if(distance(p,drag.start)>5){
-   drag.moved=true;
+  pinch=v;moved=true;
+ }else if(last){
+  if(dist(p,last)>3)moved=true;
+  if(tool==='pan'){
+   ox+=p.x-old.x;
+   oy+=p.y-old.y;
+   draw();
   }
-
-  drag.last=p;
-  draw();
  }
 });
 
-canvas.addEventListener('pointerup',e=>{
- let p=localPoint(e);
-
- if(pointers.size===1&&drag&&
- !drag.moved&&!ignoreTap){
-  tap(p);
- }
-
- pointers.delete(e.pointerId);
-
- if(!pointers.size){
-  drag=null;
-  pinch=null;
-  ignoreTap=false;
- }
+c.addEventListener('pointerup',e=>{
+ const p=local(e);
+ if(touches.size===1&&!moved)tap(p);
+ touches.delete(e.pointerId);
+ if(!touches.size){
+  last=null;pinch=null;
+ }else moved=true;
 });
 
-canvas.addEventListener('pointercancel',e=>{
- pointers.delete(e.pointerId);
- drag=null;
- pinch=null;
- ignoreTap=false;
+c.addEventListener('pointercancel',e=>{
+ touches.delete(e.pointerId);
+ last=null;pinch=null;
 });
 
-document.querySelectorAll('[data-tool]').forEach(btn=>{
- btn.onclick=()=>{
-  tool=btn.dataset.tool;
-  pending=[];
-
-  document.querySelectorAll('[data-tool]').forEach(b=>{
-   b.classList.toggle('active',b===btn);
-  });
-
-  msg('الأداة: '+btn.textContent);
-  draw();
- };
-});
-
-document.getElementById('finishBtn').onclick=finish;
-document.getElementById('fitBtn').onclick=fitDrawing;
-document.getElementById('zoomIn').onclick=()=>zoom(1.3);
-document.getElementById('zoomOut').onclick=()=>zoom(1/1.3);
-
-document.getElementById('undoBtn').onclick=()=>{
- if(pending.length)pending.pop();
- else objects.pop();
- draw();
-};
-
-document.getElementById('clearBtn').onclick=()=>{
- if(confirm('مسح الرسم الحالي؟')){
-  objects=[];
-  pending=[];
-  fitDrawing();
-  msg('تم مسح الرسم');
- }
-};
-
-// فتح نافذة ملفات أندرويد
-document.getElementById('openBtn').addEventListener('click',()=>{
- msg('جاري فتح مدير الملفات...');
- input.click();
-});
-
-function convertEntities(entities){
- const result=[];
-
+function parseEntities(entities){
+ const out=[];
  for(const e of entities){
   if(e.type==='LINE'&&e.vertices?.length>=2){
-   result.push({
-    p:e.vertices.slice(0,2).map(v=>({
-     x:v.x,y:v.y
-    }))
+   out.push({
+    p:e.vertices.slice(0,2).map(v=>({x:v.x,y:v.y}))
    });
-  }
-
-  if((e.type==='LWPOLYLINE'||e.type==='POLYLINE')
-   &&e.vertices?.length>1){
-   result.push({
+  }else if(
+   (e.type==='POLYLINE'||e.type==='LWPOLYLINE')&&
+   e.vertices?.length>1
+  ){
+   out.push({
     p:e.vertices.map(v=>({x:v.x,y:v.y})),
     closed:!!(e.shape||e.closed)
    });
-  }
-
-  if(e.type==='CIRCLE'&&e.center&&e.radius){
-   result.push({
+  }else if(e.type==='CIRCLE'&&e.center&&e.radius){
+   out.push({
     center:{x:e.center.x,y:e.center.y},
     radius:e.radius
    });
   }
  }
-
- return result;
+ return out;
 }
 
-input.addEventListener('change',async()=>{
- const file=input.files&&input.files[0];
- input.value='';
+fileInput.addEventListener('change',async e=>{
+ const f=e.target.files?.[0];
+ if(!f)return;
+ msg('تم اختيار: '+f.name);
+ details.textContent=
+  'الحجم: '+(f.size/1048576).toFixed(2)+' MB';
 
- if(!file){
-  msg('لم يتم اختيار ملف');
-  return;
- }
-
- msg('تم اختيار: '+file.name);
-
- const ext=file.name.split('.').pop().toLowerCase();
+ const ext=f.name.split('.').pop().toLowerCase();
 
  if(ext==='dwg'){
-  msg('تم اختيار DWG: '+file.name+
-  ' — يحتاج محرك DWG حقيقي لعرض الخريطة');
-  return;
- }
-
- if(ext!=='dxf'){
-  msg('صيغة غير مدعومة: '+ext);
-  return;
- }
-
- try{
-  msg('جاري تحميل خريطة DXF...');
-
-  if(typeof DxfParser==='undefined'){
-   throw Error('مكتبة DXF غير متاحة، افحص الإنترنت');
+  try{
+   const header=await f.slice(0,6).text();
+   details.textContent+=' | DWG Header: '+header;
+   msg('تم اختيار DWG بنجاح، لكن العرض يحتاج محرك DWG');
+  }catch(err){
+   msg('تعذر قراءة الملف: '+err.message);
   }
-
-  const content=await file.text();
-  const parser=new DxfParser();
-  const drawing=parser.parseSync(content);
-
-  objects=convertEntities(drawing.entities||[]);
-  pending=[];
-
-  if(!objects.length){
-   msg('الملف انقرأ، لكن ماكو عناصر مدعومة');
-   return;
+ }else if(ext==='dxf'){
+  try{
+   if(typeof DxfParser==='undefined'){
+    throw Error('مكتبة DXF غير محملة');
+   }
+   msg('جاري تحليل DXF...');
+   const parser=new DxfParser();
+   const doc=parser.parseSync(await f.text());
+   objects=parseEntities(doc.entities||[]);
+   pending=[];
+   if(objects.length){
+    fit();
+    msg('تم عرض '+objects.length+' عنصر من '+f.name);
+   }else{
+    msg('تمت القراءة لكن لا توجد عناصر مدعومة');
+   }
+  }catch(err){
+   msg('خطأ DXF: '+err.message);
   }
-
-  fitDrawing();
-
-  msg('تم فتح '+file.name+
-  ' | عدد العناصر: '+objects.length);
-
- }catch(err){
-  msg('خطأ بفتح DXF: '+err.message);
+ }else{
+  msg('الملف المختار ليس DWG أو DXF');
  }
+ fileInput.value='';
+});
+
+fileInput.addEventListener('cancel',()=>{
+ msg('تم إغلاق اختيار الملفات');
 });
 
 window.addEventListener('resize',resize);
-resize();
-fitDrawing();
+resize();fit();
 </script>
 </body>
 </html>
